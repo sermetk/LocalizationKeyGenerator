@@ -1,10 +1,8 @@
 ﻿using System;
-using System.Collections;
 using System.Collections.Generic;
 using System.Globalization;
 using System.IO;
 using System.Linq;
-using System.Resources;
 using System.Text;
 using System.Text.RegularExpressions;
 
@@ -12,17 +10,20 @@ namespace LocalizationKeyGenerator
 {
     public static class MainClass
     {
-        private static List<string> Exclusions;
-        private static List<string> XamlPropertyList;
-        private static Dictionary<string, string> ResourceDictionary;
-        private static string ResourceValuePattern = string.Empty;
+        private static string ResourceValuePattern;
         private static readonly ReplaceType FileExtension = ReplaceType.xaml;
         private static readonly string FourthWordSelectPattern = @"(?:\S+ ){4}";
         private static readonly string EscapeWhitespaceAndSpecialCharactersPattern = @"[^0-9a-zA-Z]+";
         private static readonly string SearchPath = @"C:\Temp\SampleXamarinProject\Shared\";
         private static readonly string ResourcesPath = @"C:\Temp\SampleXamarinProject\Shared\Globalization\AppResources.resx";
         private static readonly string GlobalizationNamespace = FileExtension == ReplaceType.xaml ? "xmlns:localization=\"clr-namespace:SampleXamarinProject.Globalization\" " : "SampleXamarinProject.Globalization";
-        private static string TranslateExtensionPrefix => FileExtension == ReplaceType.xaml ? "{localization:Translate " : "AppResources.";
+        private static readonly string TranslateExtensionPrefix = FileExtension == ReplaceType.xaml ? "{x:Static localization:" : "AppResources.";
+        private static readonly Dictionary<string, string> ResourceDictionary = GetResources();
+        private static readonly List<string> XamlPropertyList = new List<string> { "Text", "Title", "PlaceHolderText" };
+        private static readonly List<string> Exclusions = new List<string> {"&#10;","&quot;",".Format",".pdf",".png",".svg","//","-->",
+            "AutomationId","Binding","Commit","const","Contains","CultureInfo","FromHex","http","https","JsonProperty","MessagingCenter",
+            "OnPropertyChanged","Parse","Replace","StyleId","Value"};
+
         private enum ReplaceType
         {
             cs,
@@ -30,32 +31,28 @@ namespace LocalizationKeyGenerator
         }
         private static void Main()
         {
-            Exclusions = new List<string> { "AutomationId", "Binding", "Commit", "const", "Contains", "CultureInfo", ".Format", "FromHex", "Parse", "Replace", "MessagingCenter", "OnPropertyChanged", "StyleId", "Value",
-                "http", "https", "//", "-->", "&quot;", "-", "$", "&#", ".png", ".pdf", ".svg","JsonProperty"
-            };
-            XamlPropertyList = new List<string> { "Text", "Title" };
-            ResourceDictionary = GetResources();
-            switch (FileExtension)
+            if (FileExtension == ReplaceType.cs)
             {
-                case ReplaceType.cs:
-                    ResourceValuePattern = "(?<=\")(.*)(?=\")";
-                    foreach (var file in GetDirectoryList())
+                ResourceValuePattern = "(?<=\")(.)(?=\")";
+                foreach (var file in GetDirectoryList())
+                {
+                    FindMatches(file);
+                }
+            }
+            else if (FileExtension == ReplaceType.xaml)
+            {
+                foreach (var file in GetDirectoryList())
+                {
+                    foreach (var property in XamlPropertyList)
                     {
+                        ResourceValuePattern = $"(?<=\\s{property}=\")([a-z].*)(?=\")";
                         FindMatches(file);
                     }
-                    break;
-                case ReplaceType.xaml:
-                    foreach (var file in GetDirectoryList())
-                    {
-                        foreach (var property in XamlPropertyList)
-                        {
-                            ResourceValuePattern = $"(?<=\\s{property}=\")([a-z].*)(?=\")";
-                            FindMatches(file);
-                        }
-                    }
-                    break;
-                default:
-                    return;
+                }
+            }
+            else
+            {
+                throw new NotImplementedException();
             }
         }
         private static void FindMatches(string file)
@@ -82,9 +79,12 @@ namespace LocalizationKeyGenerator
                     if (ResourceDictionary.ContainsValue(resourceValue.Value))
                     {
                         var existingResourceName = ResourceDictionary.FirstOrDefault(x => x.Value == resourceValue.Value).Key;
-                        line = line.Replace("\"" + existingResourceName + "\"", TranslateExtensionPrefix + replacedValue);
-                        if (FileExtension == ReplaceType.xaml)
+
+                        if (FileExtension == ReplaceType.cs)
+                            line = line.Replace("\"" + resourceValue.Value + "\"", TranslateExtensionPrefix + replacedValue);
+                        else if (FileExtension == ReplaceType.xaml)
                             line = line.Replace(resourceValue.Value, TranslateExtensionPrefix + existingResourceName + "}");
+
                         Console.WriteLine("Class:{0}", line);
                         Console.ReadKey();
                     }
@@ -94,9 +94,12 @@ namespace LocalizationKeyGenerator
                         replacedValue = GetReplacedResourceName(replacedValue, Path.GetFileNameWithoutExtension(file));
                         ResourceDictionary.Add(resourceName, resourceValue.Value);
                         WriteResources(ResourceDictionary.Last());
-                        line = line.Replace(resourceValue.Value, replacedValue);
+
                         if (FileExtension == ReplaceType.cs)
-                            line = line.Replace("\"" + replacedValue + "\"", replacedValue);
+                            line = line.Replace("\"" + resourceValue.Value + "\"", replacedValue);
+                        else if (FileExtension == ReplaceType.xaml)
+                            line = line.Replace(resourceValue.Value, replacedValue);
+
                         Console.WriteLine("Key: {0}\nValue: {1}", ResourceDictionary.Last().Key, ResourceDictionary.Last().Value);
                         Console.WriteLine("Class:{0}", line);
                         Console.ReadKey();
@@ -112,17 +115,16 @@ namespace LocalizationKeyGenerator
         {
             return FileExtension switch
             {
-                ReplaceType.cs => TranslateExtensionPrefix + filename + "_" + resourceName,
+                ReplaceType.cs => TranslateExtensionPrefix + filename + "_" + string.Empty + resourceName,
                 ReplaceType.xaml => TranslateExtensionPrefix + filename + "_" + Regex.Replace(resourceName, EscapeWhitespaceAndSpecialCharactersPattern, "_") + "}",
-                _ => throw new NullReferenceException(),
+                _ => throw new NotImplementedException(),
             };
         }
         private static string[] GetDirectoryList()
         {
             if (Directory.Exists(SearchPath))
-            {
-                return Directory.GetFiles(SearchPath, $"*.{FileExtension.ToString()}", SearchOption.AllDirectories);
-            }
+                return Directory.GetFiles(SearchPath, $"*.{FileExtension}", SearchOption.AllDirectories);
+
             Environment.Exit(2);
             return null;
         }
@@ -138,28 +140,31 @@ namespace LocalizationKeyGenerator
                 }
                 return tempDictionary;
             }
-            Console.WriteLine("Resource directory not foundç");
+            Console.WriteLine("Resource directory not found.");
             return new Dictionary<string, string>();
         }
         private static void WriteResources(KeyValuePair<string, string> item)
         {
             var fileText = File.ReadAllText(ResourcesPath);
-            fileText = fileText.Replace("</root>", $"\n<data name=\"{item.Key}\" xml:space=\"preserve\"><value>{item.Value}</value></data>\n</root>"); //TODO: Format Resource.Designer
+            fileText = fileText.Replace("</root>", $"\n<data name=\"{item.Key}\" xml:space=\"preserve\"><value>{item.Value}</value></data>\n</root>"); //TO DO: Format Resource.Designer
             File.WriteAllText(ResourcesPath, fileText);
         }
         private static void WriteClassFile(string file, string finalFile)
         {
             if (!finalFile.Contains(GlobalizationNamespace))
             {
-                switch (FileExtension)
+                if (FileExtension == ReplaceType.cs)
                 {
-                    case ReplaceType.cs:
-                        finalFile = "using " + GlobalizationNamespace + ";\n" + finalFile;
-                        break;
-                    case ReplaceType.xaml:
-                        var insertIndex = finalFile.IndexOf("x:Class", StringComparison.Ordinal);
-                        finalFile = finalFile.Insert(insertIndex, GlobalizationNamespace);
-                        break;
+                    finalFile = "using " + GlobalizationNamespace + ";\n" + finalFile;
+                }
+                else if (FileExtension == ReplaceType.xaml)
+                {
+                    var insertIndex = finalFile.IndexOf("x:Class");
+                    finalFile = finalFile.Insert(insertIndex, GlobalizationNamespace);
+                }
+                else
+                {
+                    throw new NotImplementedException();
                 }
             }
             File.WriteAllText(file, finalFile);
