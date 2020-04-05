@@ -33,7 +33,7 @@ namespace LocalizationKeyGenerator
         {
             if (FileExtension == ReplaceType.cs)
             {
-                ResourceValuePattern = "(?<=\")(.)(?=\")";
+                ResourceValuePattern = "(?<=\")(.*)(?=\")";
                 foreach (var file in GetDirectoryList())
                 {
                     FindMatches(file);
